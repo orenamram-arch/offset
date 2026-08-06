@@ -734,21 +734,63 @@ if not check_password():
     st.stop() 
 
 # ==========================================================
+# SUPABASE SETUP - מוקדם בקובץ בכוונה, כי גם בורר הפרויקטים (למטה) צריך
+# אותו כדי לטעון/לשמור פרויקטים שנוספו דרך "קישור מותאם אישית".
+# ==========================================================
+SUPABASE_URL = st.secrets["supabase"]["url"]
+SUPABASE_KEY = st.secrets["supabase"]["key"]
+
+@st.cache_resource
+def init_supabase() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase = init_supabase()
+
+@st.cache_data(ttl=60)
+def fetch_saved_projects():
+    """פרויקטים שנשמרו דרך 'קישור מותאם אישית' + כפתור השמירה - מצטרפים
+    אוטומטית לרשימה הקבועה AVAILABLE_PROJECTS, בלי לגעת בקוד."""
+    try:
+        response = supabase.table("mrp_projects").select("*").execute()
+        if response.data:
+            return {row["project_id"]: row["url"] for row in response.data}
+    except Exception:
+        pass
+    return {}
+
+def save_project_to_cloud(project_id, url):
+    try:
+        supabase.table("mrp_projects").upsert(
+            {"project_id": project_id, "url": url}, on_conflict="project_id"
+        ).execute()
+        fetch_saved_projects.clear()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def delete_project_from_cloud(project_id):
+    try:
+        supabase.table("mrp_projects").delete().eq("project_id", project_id).execute()
+        fetch_saved_projects.clear()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+# ==========================================================
 # בחירת פרויקט - עובדים עם כמה קבצי Excel (פרויקטים) במקביל, בלי לגעת בקוד.
-# כדי להוסיף פרויקט קבוע חדש: הוסף שורה למילון AVAILABLE_PROJECTS למטה עם
-# כתובת ה-raw.githubusercontent.com של הקובץ - אין הגבלה על מספר הפרויקטים
-# ברשימה. אפשר גם להדביק קישור זמני ב-"קישור מותאם אישית" מבלי לערוך את
-# הקוד בכלל, אבל קישור כזה לא נשמר בין כניסות חדשות לאפליקציה - לכן לפרויקט
-# שאתה חוזר אליו שוב ושוב, עדיף להוסיף אותו כאן פעם אחת.
+# יש שתי דרכים להוסיף פרויקט קבוע: (א) להוסיף שורה למילון AVAILABLE_PROJECTS
+# למטה בקוד, או (ב) להזין "קישור מותאם אישית" ולחיצה על "💾 שמור פרויקט זה
+# לקבע" - זה נשמר בענן (Supabase) ומצטרף אוטומטית לרשימה בכל כניסה הבאה,
+# בלי לגעת בקוד בכלל. אין הגבלה על מספר הפרויקטים.
 #
 # חשוב: ה-project_id (המזהה שלפיו נשמרים/מסוננים מלאי, WIP ותוכנית הרכבה)
 # הוא לא נגזר מתוך שם הקובץ באופן אוטומטי - כי אם אתה מעלה כל חודש קובץ עם
 # שם חדש (למשל עם התאריך בשם), גזירה אוטומטית משם הקובץ הייתה יוצרת בטעות
 # "פרויקט" חדש בכל פעם ומאבדת את הרצף. במקום זה, אתה קובע את שם הפרויקט
-# בעצמך פעם אחת (בתפריט הקבוע, או בשדה הטקסט לקישור מותאם אישית) - וכל עוד
-# אתה משתמש באותו שם, זה תמיד אותו project_id, גם אם שם הקובץ עצמו משתנה.
+# בעצמך פעם אחת - וכל עוד אתה משתמש באותו שם, זה תמיד אותו project_id, גם
+# אם שם הקובץ עצמו משתנה.
 # ==========================================================
-AVAILABLE_PROJECTS = {
+AVAILABLE_PROJECTS_HARDCODED = {
     "אנטנה (ברירת מחדל)": GITHUB_URL,
     "WISLAB": "https://raw.githubusercontent.com/orenamram-arch/offset/main/NEW%20PROJECT%20WISLAB%20JUNE%202026%20AVL.xlsx",
 }
@@ -760,6 +802,10 @@ def _normalize_github_url(url):
     if "github.com" in url and "raw.githubusercontent.com" not in url and "/blob/" in url:
         url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
     return url
+
+# פרויקטים קבועים בקוד + פרויקטים ששמרת בעבר דרך כפתור "שמור פרויקט זה לקבע"
+# (השמורים-בענן גוברים אם יש התנגשות שם, כי הם העדכניים ביותר)
+AVAILABLE_PROJECTS = {**AVAILABLE_PROJECTS_HARDCODED, **fetch_saved_projects()}
 
 with st.sidebar:
     st.markdown("### 📁 פרויקט פעיל")
@@ -795,10 +841,26 @@ with st.sidebar:
         if not ACTIVE_PROJECT_URL or not PROJECT_ID:
             st.info("הזן שם פרויקט וכתובת לקובץ Excel כדי להמשיך.")
             st.stop()
-        st.caption("💡 כדי לא להזין את זה שוב בפעם הבאה, תגיד לי ואוסיף את הפרויקט הזה לרשימה הקבועה בקוד.")
+        if PROJECT_ID in AVAILABLE_PROJECTS_HARDCODED:
+            st.warning(f"השם '{PROJECT_ID}' כבר קיים ברשימה הקבועה בקוד - בחר שם אחר כדי לא להתנגש איתו.")
+        elif st.button("💾 שמור פרויקט זה לקבע (יופיע ברשימה בפעם הבאה)"):
+            _ok, _err = save_project_to_cloud(PROJECT_ID, ACTIVE_PROJECT_URL)
+            if _ok:
+                st.success(f"נשמר! '{PROJECT_ID}' יופיע ברשימה בכניסה הבאה.")
+                st.rerun()
+            else:
+                st.error(f"שגיאה בשמירת הפרויקט: {_err}")
     else:
         ACTIVE_PROJECT_URL = _normalize_github_url(AVAILABLE_PROJECTS[_selected_project])
         PROJECT_ID = _selected_project
+        if _selected_project not in AVAILABLE_PROJECTS_HARDCODED:
+            if st.button("🗑️ הסר פרויקט זה מהרשימה השמורה"):
+                _ok, _err = delete_project_from_cloud(_selected_project)
+                if _ok:
+                    st.success("הוסר.")
+                    st.rerun()
+                else:
+                    st.error(f"שגיאה בהסרה: {_err}")
 
 # אם עברו לפרויקט אחר מאז הטעינה הקודמת, מנקים נתוני-session שתלויים בפרויקט
 # הספציפי (כמו תוכנית הרכבה), כדי שלא יישארו נתונים "ישנים" מפרויקט קודם.
@@ -1012,18 +1074,6 @@ except Exception:
 
 PLOTLY_TEMPLATE = "plotly_white" if _theme_base == "light" else "plotly_dark"
 COLOR_SEQ = [PRIMARY, ACCENT, WARNING, DANGER, SUCCESS, "#A78BFA", "#F472B6", "#34D399"]
-
-# ==========================================================
-# SUPABASE SETUP & FAST CACHED STORAGE
-# ==========================================================
-SUPABASE_URL = st.secrets["supabase"]["url"]
-SUPABASE_KEY = st.secrets["supabase"]["key"]
-
-@st.cache_resource
-def init_supabase() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-supabase = init_supabase()
 
 @st.cache_data(ttl=60)
 def fetch_all_inventory_records(project_id):
