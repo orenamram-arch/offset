@@ -3,6 +3,7 @@
 # סידור עץ BOM דינמי מתוך האקסל, ותיקוני תצוגת UI עקבית.
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -830,6 +831,201 @@ def _apply_cache_bust(url):
 # (השמורים-בענן גוברים אם יש התנגשות שם, כי הם העדכניים ביותר)
 AVAILABLE_PROJECTS = {**AVAILABLE_PROJECTS_HARDCODED, **fetch_saved_projects()}
 
+# ==========================================================
+# מסך "WELCOME" - מוצג לפני בחירת פרויקט (במקום מסך ריק)
+# ==========================================================
+# תמונת רקע הנדסית/MRP, שעון מחוגים גדול (Canvas+JS חי, מתעדכן כל שנייה),
+# ומזג אוויר נוכחי לפי מיקום המשתמש (מבוקש דרך הדפדפן עצמו, עם נפילה
+# חזרה אוטומטית למיקום לפי IP אם המשתמש לא מאשר גישה למיקום - בלי שום
+# ספריית פייתון/מפתח API נוספים, כי הכל רץ בצד הלקוח בתוך st.components).
+# משתמשים ב-Open-Meteo (חינמי, בלי מפתח) ו-ipapi.co (חינמי, בלי מפתח)
+# כשירותי מזג אוויר/מיקום.
+def render_welcome_screen():
+    components.html("""
+    <div id="welcome-wrap" style="
+        position: relative; width: 100%; height: 620px; border-radius: 22px;
+        overflow: hidden; font-family: 'Assistant', sans-serif;
+        background: radial-gradient(circle at 30% 20%, #1e2a52 0%, #0b0f24 60%, #05070f 100%);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+    ">
+        <!-- דוגמת "מעגל מודפס" עדינה כרקע גיבוי, מוצגת תמיד מתחת לתמונה -->
+        <svg style="position:absolute; inset:0; width:100%; height:100%; opacity:0.18;" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <pattern id="circuitPattern" width="90" height="90" patternUnits="userSpaceOnUse">
+                    <path d="M0 45 H35 M55 45 H90 M45 0 V35 M45 55 V90" stroke="#7dd3fc" stroke-width="1.4" fill="none"/>
+                    <circle cx="45" cy="45" r="4" fill="none" stroke="#7dd3fc" stroke-width="1.4"/>
+                    <circle cx="0" cy="45" r="2.5" fill="#7dd3fc"/>
+                    <circle cx="90" cy="45" r="2.5" fill="#7dd3fc"/>
+                    <circle cx="45" cy="0" r="2.5" fill="#7dd3fc"/>
+                    <circle cx="45" cy="90" r="2.5" fill="#7dd3fc"/>
+                </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#circuitPattern)"/>
+        </svg>
+
+        <!-- תמונת רקע הנדסית אמיתית - אם היא נכשלת בטעינה מכל סיבה, היא
+             נעלמת אוטומטית (onerror) והדוגמה למעלה נשארת כרקע חלופי -->
+        <img src="https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=1600&q=80"
+             onerror="this.style.display='none';"
+             style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover;" />
+
+        <div style="position:absolute; inset:0; background: linear-gradient(180deg, rgba(10,12,30,0.55) 0%, rgba(10,12,30,0.75) 100%);"></div>
+
+        <div style="position:relative; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:#ffffff; text-align:center;">
+            <div style="font-size:15px; letter-spacing:6px; opacity:0.75; margin-bottom:6px;">MRP CONTROL TOWER</div>
+            <h1 style="font-size:58px; font-weight:900; letter-spacing:8px; margin:0 0 26px 0; text-shadow:0 6px 24px rgba(0,0,0,0.6);">WELCOME</h1>
+
+            <canvas id="analogClock" width="230" height="230" style="filter: drop-shadow(0 8px 20px rgba(0,0,0,0.5));"></canvas>
+
+            <div id="weatherBox" style="
+                margin-top:28px; font-size:17px; font-weight:600; color:#ffffff;
+                background:rgba(255,255,255,0.14); backdrop-filter: blur(8px);
+                padding:14px 30px; border-radius:18px; border:1px solid rgba(255,255,255,0.25);
+                min-width:260px;">
+                🌐 מאתר את המיקום שלך...
+            </div>
+        </div>
+
+        <div style="position:absolute; bottom:16px; width:100%; text-align:center; z-index:2; color:rgba(255,255,255,0.65); font-size:13px; letter-spacing:1px;">
+            Created by Oren Amram
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        // ---------- שעון מחוגים חי ----------
+
+        function drawClock() {
+            const canvas = document.getElementById('analogClock');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const radius = canvas.height / 2;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.translate(radius, radius);
+            const r = radius * 0.92;
+
+            // מסגרת השעון
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, 2 * Math.PI);
+            ctx.fillStyle = 'rgba(255,255,255,0.10)';
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+            ctx.lineWidth = r * 0.03;
+            ctx.stroke();
+
+            // סימוני שעות
+            for (let i = 0; i < 12; i++) {
+                const ang = (i * Math.PI) / 6;
+                ctx.beginPath();
+                ctx.moveTo(Math.sin(ang) * r * 0.85, -Math.cos(ang) * r * 0.85);
+                ctx.lineTo(Math.sin(ang) * r * 0.95, -Math.cos(ang) * r * 0.95);
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = r * 0.02;
+                ctx.stroke();
+            }
+
+            const now = new Date();
+            const hh = now.getHours() % 12;
+            const mm = now.getMinutes();
+            const ss = now.getSeconds();
+
+            function drawHand(angleDeg, lengthRatio, widthRatio, color) {
+                const ang = (angleDeg * Math.PI) / 180;
+                ctx.beginPath();
+                ctx.lineWidth = r * widthRatio;
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = color;
+                ctx.moveTo(0, 0);
+                ctx.lineTo(Math.sin(ang) * r * lengthRatio, -Math.cos(ang) * r * lengthRatio);
+                ctx.stroke();
+            }
+
+            const hourAngle = (hh + mm / 60) * 30;
+            const minAngle = (mm + ss / 60) * 6;
+            const secAngle = ss * 6;
+
+            drawHand(hourAngle, 0.5, 0.07, '#ffffff');
+            drawHand(minAngle, 0.75, 0.045, '#ffffff');
+            drawHand(secAngle, 0.82, 0.018, '#F59E0B');
+
+            ctx.beginPath();
+            ctx.arc(0, 0, r * 0.045, 0, 2 * Math.PI);
+            ctx.fillStyle = '#F59E0B';
+            ctx.fill();
+
+            ctx.restore();
+        }
+        drawClock();
+        setInterval(drawClock, 1000);
+
+        // ---------- מזג אוויר לפי מיקום ----------
+        function weatherCodeToText(code) {
+            const map = {
+                0: '☀️ בהיר', 1: '🌤️ בהיר בעיקר', 2: '⛅ מעונן חלקית', 3: '☁️ מעונן',
+                45: '🌫️ ערפל', 48: '🌫️ ערפל קפוא',
+                51: '🌦️ טפטוף קל', 53: '🌦️ טפטוף', 55: '🌧️ טפטוף חזק',
+                61: '🌧️ גשם קל', 63: '🌧️ גשם', 65: '🌧️ גשם חזק',
+                71: '🌨️ שלג קל', 73: '🌨️ שלג', 75: '❄️ שלג חזק',
+                80: '🌦️ ממטרים', 81: '🌧️ ממטרים', 82: '⛈️ ממטרים חזקים',
+                95: '⛈️ סופת רעמים', 96: '⛈️ סופת רעמים עם ברד'
+            };
+            return map[code] || '🌡️ מזג אוויר';
+        }
+
+        function renderWeather(temp, code, label) {
+            const box = document.getElementById('weatherBox');
+            if (!box) return;
+            box.innerHTML = "📍 " + label + "<br>" + weatherCodeToText(code) + " &nbsp; " + Math.round(temp) + "°C";
+        }
+
+        function renderWeatherError() {
+            const box = document.getElementById('weatherBox');
+            if (box) box.innerHTML = "לא ניתן היה לטעון את מזג האוויר כרגע";
+        }
+
+        function fetchWeather(lat, lon, label) {
+            fetch("https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current_weather=true")
+                .then(r => r.json())
+                .then(data => {
+                    const cw = data.current_weather;
+                    renderWeather(cw.temperature, cw.weathercode, label);
+                })
+                .catch(renderWeatherError);
+        }
+
+        function fetchByIP() {
+            fetch("https://ipapi.co/json/")
+                .then(r => r.json())
+                .then(d => {
+                    if (d && d.latitude && d.longitude) {
+                        fetchWeather(d.latitude, d.longitude, d.city || 'המיקום המשוער שלך');
+                    } else {
+                        renderWeatherError();
+                    }
+                })
+                .catch(renderWeatherError);
+        }
+
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(pos) { fetchWeather(pos.coords.latitude, pos.coords.longitude, 'המיקום שלך'); },
+                function() { fetchByIP(); },
+                { timeout: 4000 }
+            );
+        } else {
+            fetchByIP();
+        }
+    })();
+    </script>
+    """, height=640, scrolling=False)
+
+# מיכל בעמוד הראשי (לא בסיידבר) שבו יוצג מסך ה-WELCOME אם עדיין לא
+# נבחר פרויקט - נוצר כאן, לפני הכניסה ל-with st.sidebar למטה, כדי
+# שהתוכן יוצג במקום הנכון (עמוד ראשי) גם שהתנאי בעצמו מתגלה בתוך קוד
+# שרץ בהקשר הסיידבר.
+_main_welcome_slot = st.empty()
+
 with st.sidebar:
     st.markdown("### 📁 פרויקט פעיל")
     _placeholder = "— בחר פרויקט —"
@@ -845,7 +1041,9 @@ with st.sidebar:
             st.query_params.pop("project", None)
         except Exception:
             pass
-        st.info("בחר פרויקט מהרשימה כדי לטעון נתונים.")
+        with _main_welcome_slot.container():
+            render_welcome_screen()
+            st.info("👈 בחר פרויקט מהרשימה בסיידבר כדי לטעון נתונים.")
         st.stop()
 
     try:
