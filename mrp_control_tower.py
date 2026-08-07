@@ -2591,11 +2591,27 @@ SUPPLY_DATE_MAP = _build_supply_date_map()
 
 
 def get_base_mrp_eta_and_qty(pn):
+    """מחזיר את ה-ETA/כמות הבסיסיים (מה-MRP, לא ETA ידני) לרכיב-רכש - אך ורק
+    מתוך בלוק "לוח האספקה" (ETA) האמיתי (_supply_block_start_idx..
+    _supply_block_end_idx), בדיוק כמו get_cumulative_incoming_supply.
+
+    תיקון קריטי (בעקבות משוב): לפני התיקון, הפונקציה סרקה את כל
+    SUPPLY_DATE_MAP - שכולל גם את בלוק "PROJECT PLAN" (MONTH_COLS), שמייצג
+    כמויות *בנייה מתוכננות של הרכבות*, לא אספקת רכש נכנסת. לרכיב-רכש טהור
+    (לא הרכבה) שיש לו בטעות ערך לא-אפס איפשהו בטווח עמודות התוכנית (רעש/
+    שאריות בנתונים, לא רלוונטי לשורת רכיב-רכש) - זה גרם לפונקציה להחזיר
+    "ETA" שגוי לגמרי (למשל שנים קדימה), על אף שלרכיב אין שום ETA אמיתי.
+    זה בדיוק הפער שכבר טופל נכון ב-get_cumulative_incoming_supply (שם יש
+    "if col_pos >= _supply_block_end_idx: continue") - עכשיו שתי הפונקציות
+    עקביות זו לזו.
+    """
     row_idx = DF_RAW_PN_ROW_INDEX.get(str(pn).strip())
     if row_idx is None:
         return "בדיקה נדרשת", 0.0
 
     for col_pos in sorted(SUPPLY_DATE_MAP.keys()):
+        if col_pos >= _supply_block_end_idx:
+            continue
         try:
             val = df_raw.iloc[row_idx, col_pos]
             q = safe_num(val)
